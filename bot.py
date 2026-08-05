@@ -1,53 +1,69 @@
 import os
 import requests
 import telebot
+import yt_dlp
 
-TOKEN = '8895343882:AAHAnxW5-AEohWLPexGoUFYqwRhJ-NfGrAs'
+TOKEN = '8352638031:AAGh1SO6D8-Lk1EscLCZX_z0kae6BSnMCCc'
 bot = telebot.TeleBot(TOKEN)
 
-@bot.message_handler(commands=['start'])
+@bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    bot.reply_to(message, "🎵 Напиши название песни или исполнителя, и я найду MP3-файл!")
+    bot.reply_to(message, "Привет! Напиши мне название песни или исполнителя, и я скачаю полный MP3-файл!")
 
 @bot.message_handler(func=lambda message: True)
 def search_and_send_music(message):
     query = message.text
-    msg = bot.reply_to(message, "🔍 Ищу аудиофайл в интернете...")
+    status_msg = bot.reply_to(message, f"🔎 Ищу и скачиваю «{query}»...")
+    filename = f"{message.chat.id}_{message.message_id}.mp3"
 
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        api_url = f"https://api.deezer.com/search?q={query}"
-        response = requests.get(api_url, headers=headers).json()
+        # Поиск трека через Deezer для получения красивого названия и автора
+        deezer_url = f"https://api.deezer.com/search?q={query}"
+        response = requests.get(deezer_url).json()
 
-        if not response.get('data'):
-            bot.edit_message_text("❌ Песня не найдена. Попробуй уточнить запрос.", message.chat.id, msg.message_id)
-            return
+        if response.get('data'):
+            track_info = response['data'][0]
+            title = track_info['title']
+            artist = track_info['artist']['name']
+            search_query = f"{artist} - {title}"
+        else:
+            # Если Deezer не нашел, ищем напрямую по запросу пользователя через YouTube
+            search_query = query
 
-        track = response['data'][0]
-        title = track['title']
-        artist = track['artist']['name']
-        audio_url = track['preview']
+        # Настройки yt-dlp для скачивания полного аудио
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': filename,
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'quiet': True,
+            'noplaylist': True
+        }
 
-        filename = "temp_song.mp3"
-        audio_data = requests.get(audio_url, headers=headers).content
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([f"ytsearch1:{search_query}"])
 
-        with open(filename, 'wb') as f:
-            f.write(audio_data)
+        # Отправка файла в Telegram
+        if os.path.exists(filename):
+            with open(filename, 'rb') as audio:
+                bot.send_audio(
+                    message.chat.id, 
+                    audio, 
+                    caption=f"🎵 По запросу: {query}"
+                )
+            os.remove(filename)
+            bot.delete_message(chat_id=message.chat.id, message_id=status_msg.message_id)
+        else:
+            bot.edit_message_text("❌ Не удалось найти или загрузить аудиофайл.", chat_id=message.chat.id, message_id=status_msg.message_id)
 
-        with open(filename, 'rb') as audio:
-            bot.send_audio(
-                message.chat.id,
-                audio,
-                title=title,
-                performer=artist
-            )
-
-        bot.delete_message(message.chat.id, msg.message_id)
-
+    except Exception as e:
+        print(f"Error: {e}")
+        bot.edit_message_text("⚠️ Произошла ошибка при скачивании трека.", chat_id=message.chat.id, message_id=status_msg.message_id)
         if os.path.exists(filename):
             os.remove(filename)
 
-    except Exception as e:
-        bot.edit_message_text("❌ Не удалось загрузить этот трек. Попробуй другое название!", message.chat.id, msg.message_id)
-
 bot.infinity_polling()
+
