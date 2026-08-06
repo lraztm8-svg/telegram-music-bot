@@ -2,28 +2,14 @@ import os
 import time
 import threading
 from flask import Flask
-import requests
 import telebot
 import yt_dlp
 
-# --- МИНИ-СЕРВЕР ДЛЯ RENDER ---
-app = Flask('')
-
-@app.route('/')
-def home():
-    return "Bot is active!"
-
-def run_web():
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
-
-threading.Thread(target=run_web, daemon=True).start()
-# ------------------------------
-
+# 1. Задаем токен
 TOKEN = '8352638031:AAGh1SO6D8-Lk1EscLCZX_z0kae6BSnMCCc'
 bot = telebot.TeleBot(TOKEN)
 
-# Функция для отрисовки красивой шкалы (например: [██████░░░░] 60%)
+# 2. Функция прогресс-бара
 def make_progress_bar(percent):
     filled_len = int(10 * percent // 100)
     bar = '█' * filled_len + '░' * (10 - filled_len)
@@ -39,13 +25,11 @@ def search_and_send_music(message):
     status_msg = bot.reply_to(message, f"🔎 Ищу «{query}»...")
     
     filename_template = f"{message.chat.id}_{message.message_id}.%(ext)s"
-    last_update_time = [0] # Храним время последнего обновления текста в TG
+    last_update_time = [0]
 
-    # Функция-перехватчик прогресса скачивания
     def progress_hook(d):
         if d['status'] == 'downloading':
             current_time = time.time()
-            # Обновляем сообщение в Telegram не чаще одного раза в 2 секунды
             if current_time - last_update_time[0] > 2:
                 total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
                 downloaded = d.get('downloaded_bytes', 0)
@@ -72,7 +56,7 @@ def search_and_send_music(message):
             'noplaylist': True,
             'nocheckcertificate': True,
             'geo_bypass': True,
-            'progress_hooks': [progress_hook]  # Подключаем отслеживание прогресса
+            'progress_hooks': [progress_hook]
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -87,7 +71,6 @@ def search_and_send_music(message):
                 downloaded_file = None
 
         if downloaded_file and os.path.exists(downloaded_file):
-            # Изменяем статус перед отправкой самого файла
             bot.edit_message_text("⬆️ **Отправка аудиотрека в чат...**", chat_id=message.chat.id, message_id=status_msg.message_id, parse_mode='Markdown')
             
             with open(downloaded_file, 'rb') as audio:
@@ -107,6 +90,20 @@ def search_and_send_music(message):
         print(f"Error details: {e}")
         bot.edit_message_text("⚠️ Ошибка сервера. Попробуй другой запрос.", chat_id=message.chat.id, message_id=status_msg.message_id)
 
-bot.remove_webhook()
-bot.infinity_polling(skip_pending=True)
+# 3. Запуск самого бота в ДОЧЕРНЕМ потоке
+def run_bot():
+    bot.remove_webhook()
+    bot.infinity_polling(skip_pending=True)
 
+threading.Thread(target=run_bot, daemon=True).start()
+
+# 4. Запуск Flask в ГЛАВНОМ потоке на порту Render (чтобы деплой мгновенно прошел)
+app = Flask('')
+
+@app.route('/')
+def main():
+    return "OK"
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
