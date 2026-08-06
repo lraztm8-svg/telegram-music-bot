@@ -1,4 +1,4 @@
 pyTelegramBotAPI
-requests
 yt-dlp
+requests
 flask
